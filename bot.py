@@ -9,6 +9,7 @@ KILL_SHOT_RANGE = 20.0
 AIM_THRESHOLD = 0.95
 FINISH_STREAK = 4
 OPPONENT_WASTE_PATIENCE = 25
+CRITICAL_HP = 25
 
 
 def decide(state, memory):
@@ -55,12 +56,20 @@ def decide(state, memory):
             return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
         if mirrored and first_contact:
             return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-        if idle_or_rotate or waste_streak or long_waste:
-            return {"type": "attack_melee"}, memory
         return {"type": "attack_melee"}, memory
 
     if aim_dot < AIM_THRESHOLD:
         return {"type": "rotate", "dx": dx, "dy": dy}, memory
+
+    final_stand_press = (
+        state.get("own_hp", 100) <= CRITICAL_HP
+        and state.get("opponent_hp", 100) <= state.get("own_hp", 100) + 10
+        and uses_left > 0
+        and cooldown == 0
+        and gap <= RANGED_RANGE
+    )
+    if final_stand_press:
+        return {"type": "attack_ranged"}, memory
 
     if uses_left > 0 and cooldown == 0 and gap <= RANGED_RANGE:
         memory.pop("in_melee", None)
@@ -75,8 +84,8 @@ def decide(state, memory):
     if gap < KILL_SHOT_RANGE and uses_left <= 1:
         return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
     if waste_streak or long_waste:
-        return _move_toward(dx, dy), memory
-    return _move_toward(dx, dy), memory
+        return _move_toward(dx, dy, own_x, own_y), memory
+    return _move_toward(dx, dy, own_x, own_y), memory
 
 
 def _normalize(dx, dy):
@@ -90,8 +99,24 @@ def _clamp(value):
     return min(max(value, ARENA_MIN), ARENA_MAX)
 
 
-def _move_toward(dx, dy):
+def _move_toward(dx, dy, own_x, own_y):
     ux, uy = _normalize(dx, dy)
+    margin = 12.0
+    rx, ry = 0.0, 0.0
+    if own_x < margin:
+        rx += 1.0
+    if own_x > ARENA_MAX - margin:
+        rx -= 1.0
+    if own_y < margin:
+        ry += 1.0
+    if own_y > ARENA_MAX - margin:
+        ry -= 1.0
+    if rx != 0.0 or ry != 0.0:
+        mag = math.hypot(rx, ry)
+        rx, ry = rx / mag, ry / mag
+        ux = ux * 0.65 + rx * 0.35
+        uy = uy * 0.65 + ry * 0.35
+        ux, uy = _normalize(ux, uy)
     return {
         "type": "move",
         "dx": ux * MOVE_SPEED,
