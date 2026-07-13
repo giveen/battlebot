@@ -28,17 +28,39 @@ def decide(state, memory):
     facing_length = math.hypot(facing_dx, facing_dy)
     aim_dot = (facing_dx * dx + facing_dy * dy) / (facing_length * gap) if gap > 0 else 1.0
 
+    opponent_action = state.get("opponent_action", "")
+    history = memory.setdefault("opponent_history", [])
+    history.append(opponent_action)
+    if len(history) > 8:
+        del history[: len(history) - 8]
+
+    idle_or_rotate = bool(history and history[-1] in {"idle", "rotate"})
+    mirrored = (
+        len(history) >= 3
+        and len(set(history[-3:])) == 1
+        and history[-1] not in {"idle", "rotate"}
+    )
+
     if aim_dot < AIM_THRESHOLD:
         return {"type": "rotate", "dx": dx, "dy": dy}, memory
 
     if uses_left > 0 and cooldown == 0 and gap <= RANGED_RANGE:
         memory.pop("in_melee", None)
+        aggressive_ops = {"Peregrine", "Ronin", "Heat-Seeking Predator"}
+        if idle_or_rotate or (memory.get("opponent_name") in aggressive_ops and gap > 15):
+            return {"type": "attack_ranged"}, memory
+        if mirrored and gap > 10:
+            return {"type": "attack_ranged"}, memory
         return {"type": "attack_ranged"}, memory
 
     if gap <= MELEE_RANGE:
         first_contact = memory.get("in_melee") is not True
         memory["in_melee"] = True
         if first_contact and state.get("own_hp", 100) < state.get("opponent_hp", 100):
+            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
+        if idle_or_rotate:
+            return {"type": "attack_melee"}, memory
+        if mirrored and first_contact:
             return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
         return {"type": "attack_melee"}, memory
 
