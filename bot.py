@@ -64,10 +64,10 @@ def decide(state, memory):
         memory["in_melee"] = True
         if first_contact and state.get("own_hp", 100) < state.get("opponent_hp", 100):
             return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-        if idle_or_rotate or waste_streak or long_waste:
-            return {"type": "attack_melee"}, memory
         if mirrored and first_contact:
             return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
+        if idle_or_rotate or waste_streak or long_waste:
+            return {"type": "attack_melee"}, memory
         return {"type": "attack_melee"}, memory
 
     memory.pop("in_melee", None)
