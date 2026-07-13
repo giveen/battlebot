@@ -47,6 +47,7 @@ def decide(state, memory):
         and all(h not in {"idle", "rotate"} for h in history[-FINISH_STREAK:])
     )
     long_waste = len(history) >= OPPONENT_WASTE_PATIENCE and waste_streak
+
     if gap <= MELEE_RANGE:
         first_contact = memory.get("in_melee") is not True
         memory["in_melee"] = True
