@@ -47,6 +47,17 @@ def decide(state, memory):
         and all(h not in {"idle", "rotate"} for h in history[-FINISH_STREAK:])
     )
     long_waste = len(history) >= OPPONENT_WASTE_PATIENCE and waste_streak
+    if gap <= MELEE_RANGE:
+        first_contact = memory.get("in_melee") is not True
+        memory["in_melee"] = True
+        if first_contact and state.get("own_hp", 100) <= state.get("opponent_hp", 100) - 20:
+            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
+        if mirrored and first_contact:
+            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
+        if idle_or_rotate or waste_streak or long_waste:
+            return {"type": "attack_melee"}, memory
+        return {"type": "attack_melee"}, memory
+
     if aim_dot < AIM_THRESHOLD:
         return {"type": "rotate", "dx": dx, "dy": dy}, memory
 
@@ -58,17 +69,6 @@ def decide(state, memory):
         if mirrored and gap > 10:
             return {"type": "attack_ranged"}, memory
         return {"type": "attack_ranged"}, memory
-
-    if gap <= MELEE_RANGE:
-        first_contact = memory.get("in_melee") is not True
-        memory["in_melee"] = True
-        if first_contact and state.get("own_hp", 100) < state.get("opponent_hp", 100):
-            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-        if mirrored and first_contact:
-            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-        if idle_or_rotate or waste_streak or long_waste:
-            return {"type": "attack_melee"}, memory
-        return {"type": "attack_melee"}, memory
 
     memory.pop("in_melee", None)
     if gap < KILL_SHOT_RANGE and uses_left <= 1:
