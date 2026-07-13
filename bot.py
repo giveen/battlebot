@@ -5,7 +5,7 @@ ARENA_MAX = 100.0
 MOVE_SPEED = 5.0
 MELEE_RANGE = 5.0
 RANGED_RANGE = 30.0
-CLOSE_RANGE = 25.0
+KILL_SHOT_RANGE = 20.0
 AIM_THRESHOLD = 0.95
 
 
@@ -37,7 +37,7 @@ def decide(state, memory):
     if gap <= MELEE_RANGE:
         return {"type": "attack_melee"}, memory
 
-    if gap < CLOSE_RANGE:
+    if gap < KILL_SHOT_RANGE:
         return _move_toward(dx, dy), memory
 
     return _move_toward(dx, dy), memory
