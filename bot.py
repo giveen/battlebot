@@ -32,13 +32,19 @@ def decide(state, memory):
         return {"type": "rotate", "dx": dx, "dy": dy}, memory
 
     if uses_left > 0 and cooldown == 0 and gap <= RANGED_RANGE:
+        memory.pop("in_melee", None)
         return {"type": "attack_ranged"}, memory
 
     if gap <= MELEE_RANGE:
+        first_contact = memory.get("in_melee") is not True
+        memory["in_melee"] = True
+        if first_contact and state.get("own_hp", 100) < state.get("opponent_hp", 100):
+            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
         return {"type": "attack_melee"}, memory
 
-    if gap < KILL_SHOT_RANGE:
-        return _move_toward(dx, dy), memory
+    memory.pop("in_melee", None)
+    if gap < KILL_SHOT_RANGE and uses_left <= 1:
+        return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
 
     return _move_toward(dx, dy), memory
 
