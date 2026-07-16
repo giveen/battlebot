@@ -1,160 +1,79 @@
 import math
 
+MELEE_R = 5.0
+RANGED_R = 30.0
+MOVE_SPEED = 5.0
+CONE = 0.9239       # cos(22.5 deg)
 ARENA_MIN = 0.0
 ARENA_MAX = 100.0
-MOVE_SPEED = 5.0
-MELEE_RANGE = 5.0
-RANGED_RANGE = 30.0
-KILL_SHOT_RANGE = 20.0
-AIM_THRESHOLD = 0.95
-FINISH_STREAK = 4
-OPPONENT_WASTE_PATIENCE = 25
-CRITICAL_HP = 25
+MARGIN = 10.0
+
+
+def _unit(dx, dy):
+    d = math.hypot(dx, dy)
+    return (dx / d, dy / d) if d > 1e-9 else (1.0, 0.0)
 
 
 def decide(state, memory):
-    own_x = state["own_position"]["x"]
-    own_y = state["own_position"]["y"]
-    opp_x = state["opponent_position"]["x"]
-    opp_y = state["opponent_position"]["y"]
+    # Read state
+    ox, oy = state["own_position"]["x"], state["own_position"]["y"]
+    rx, ry = state["opponent_position"]["x"], state["opponent_position"]["y"]
+    dx, dy = rx - ox, ry - oy
+    dist = math.hypot(dx, dy)
 
-    dx = opp_x - own_x
-    dy = opp_y - own_y
-    gap = math.hypot(dx, dy)
+    hp = state["own_hp"]
+    opp_hp = state["opponent_hp"]
+    cd = state["ranged_cooldown_remaining"]
+    uses = state["ranged_uses_remaining"]
 
-    cooldown = state["ranged_cooldown_remaining"]
-    uses_left = state["ranged_uses_remaining"]
+    # Aim check
+    fx, fy = state["own_facing"]["dx"], state["own_facing"]["dy"]
+    fl = math.hypot(fx, fy)
+    aim = (fx * dx + fy * dy) / (fl * dist) if dist > 0.1 else 1.0
+    aimed = aim >= CONE
 
-    facing_dx = state["own_facing"]["dx"]
-    facing_dy = state["own_facing"]["dy"]
+    # Opponent facing — info advantage
+    ofx, ofy = state["opponent_facing"]["dx"], state["opponent_facing"]["dy"]
+    to_me = math.hypot(ox - rx, oy - ry)
+    if to_me > 0.1:
+        opp_aim = (ofx * (ox - rx) + ofy * (oy - ry)) / (math.hypot(ofx, ofy) * to_me)
+    else:
+        opp_aim = 1.0
+    opp_faces_away = opp_aim <= -CONE  # back is to us
 
-    facing_length = math.hypot(facing_dx, facing_dy)
-    aim_dot = (facing_dx * dx + facing_dy * dy) / (facing_length * gap) if gap > 0 else 1.0
+    # 1. RANGED — best damage (15), fire when ready and aimed
+    if uses > 0 and cd == 0 and dist <= RANGED_R:
+        if aimed:
+            return {"type": "attack_ranged"}, {"hp": hp, "opp_hp": opp_hp}
+        return {"type": "rotate", "dx": dx, "dy": dy}, {"hp": hp, "opp_hp": opp_hp}
 
-    opponent_action = state.get("opponent_action", "")
-    history = memory.setdefault("opponent_history", [])
-    history.append(opponent_action)
-    if len(history) > 8:
-        del history[: len(history) - 8]
+    # 2. MELEE — aim first, then strike
+    if dist <= MELEE_R:
+        if aimed:
+            return {"type": "attack_melee"}, {"hp": hp, "opp_hp": opp_hp}
+        return {"type": "rotate", "dx": dx, "dy": dy}, {"hp": hp, "opp_hp": opp_hp}
 
-    idle_or_rotate = bool(history and history[-1] in {"idle", "rotate"})
-    mirrored = (
-        len(history) >= 3
-        and len(set(history[-3:])) == 1
-        and history[-1] not in {"idle", "rotate"}
-    )
-    waste_streak = (
-        len(history) >= FINISH_STREAK
-        and all(h not in {"idle", "rotate"} for h in history[-FINISH_STREAK:])
-    )
-    long_waste = len(history) >= OPPONENT_WASTE_PATIENCE and waste_streak
+    # 3. Rotate to face opponent if needed before moving
+    if not aimed:
+        return {"type": "rotate", "dx": dx, "dy": dy}, {"hp": hp, "opp_hp": opp_hp}
 
-    if gap <= MELEE_RANGE:
-        first_contact = memory.get("in_melee") is not True
-        memory["in_melee"] = True
-        if first_contact and state.get("own_hp", 100) <= state.get("opponent_hp", 100) - 20:
-            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-        if mirrored and first_contact:
-            return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-        return {"type": "attack_melee"}, memory
+    # 4. MOVE toward opponent with wall avoidance
+    ux, uy = _unit(dx, dy)
 
-    if aim_dot < AIM_THRESHOLD:
-        return {"type": "rotate", "dx": dx, "dy": dy}, memory
+    # Avoid walls
+    steer_x, steer_y = 0.0, 0.0
+    if ox < MARGIN:
+        steer_x += 1.0
+    if ox > ARENA_MAX - MARGIN:
+        steer_x -= 1.0
+    if oy < MARGIN:
+        steer_y += 1.0
+    if oy > ARENA_MAX - MARGIN:
+        steer_y -= 1.0
+    if steer_x != 0.0 or steer_y != 0.0:
+        steer_x, steer_y = _unit(steer_x, steer_y)
+        ux = ux * 0.7 + steer_x * 0.3
+        uy = uy * 0.7 + steer_y * 0.3
+        ux, uy = _unit(ux, uy)
 
-    final_stand_press = (
-        state.get("own_hp", 100) <= CRITICAL_HP
-        and state.get("opponent_hp", 100) <= state.get("own_hp", 100) + 10
-        and uses_left > 0
-        and cooldown == 0
-        and gap <= RANGED_RANGE
-    )
-    if final_stand_press:
-        return {"type": "attack_ranged"}, memory
-
-    if uses_left > 0 and cooldown == 0 and gap <= RANGED_RANGE:
-        memory.pop("in_melee", None)
-        aggressive_ops = {"Peregrine", "Ronin", "Heat-Seeking Predator"}
-        if idle_or_rotate or (memory.get("opponent_name") in aggressive_ops and gap > 15):
-            return {"type": "attack_ranged"}, memory
-        if mirrored and gap > 10:
-            return {"type": "attack_ranged"}, memory
-        return {"type": "attack_ranged"}, memory
-
-    memory.pop("in_melee", None)
-    if gap < KILL_SHOT_RANGE and uses_left <= 1:
-        return _move_away(own_x, own_y, opp_x, opp_y, dx, dy), memory
-    if waste_streak or long_waste:
-        return _move_toward(dx, dy, own_x, own_y), memory
-    return _move_toward(dx, dy, own_x, own_y), memory
-
-
-def _normalize(dx, dy):
-    mag = math.hypot(dx, dy)
-    if mag == 0:
-        return 0.0, 0.0
-    return dx / mag, dy / mag
-
-
-def _clamp(value):
-    return min(max(value, ARENA_MIN), ARENA_MAX)
-
-
-def _move_toward(dx, dy, own_x, own_y):
-    ux, uy = _normalize(dx, dy)
-    margin = 12.0
-    rx, ry = 0.0, 0.0
-    if own_x < margin:
-        rx += 1.0
-    if own_x > ARENA_MAX - margin:
-        rx -= 1.0
-    if own_y < margin:
-        ry += 1.0
-    if own_y > ARENA_MAX - margin:
-        ry -= 1.0
-    if rx != 0.0 or ry != 0.0:
-        mag = math.hypot(rx, ry)
-        rx, ry = rx / mag, ry / mag
-        ux = ux * 0.65 + rx * 0.35
-        uy = uy * 0.65 + ry * 0.35
-        ux, uy = _normalize(ux, uy)
-    return {
-        "type": "move",
-        "dx": ux * MOVE_SPEED,
-        "dy": uy * MOVE_SPEED,
-    }
-
-
-def _move_away(own_x, own_y, opp_x, opp_y, dx, dy):
-    ax, ay = _normalize(-dx, -dy)
-    predicted_x = _clamp(own_x + ax * MOVE_SPEED)
-    predicted_y = _clamp(own_y + ay * MOVE_SPEED)
-    current_gap = math.hypot(opp_x - own_x, opp_y - own_y)
-    predicted_gap = math.hypot(opp_x - predicted_x, opp_y - predicted_y)
-
-    if predicted_gap - current_gap >= MOVE_SPEED * 0.5:
-        return {
-            "type": "move",
-            "dx": predicted_x - own_x,
-            "dy": predicted_y - own_y,
-        }
-
-    if ax == 0.0 and ay == 0.0:
-        ax, ay = 1.0, 0.0
-    perp_options = ((-ay, ax), (ay, -ax))
-    best = max(
-        perp_options,
-        key=lambda p: _distance_to_nearest_wall(
-            _clamp(own_x + p[0] * MOVE_SPEED),
-            _clamp(own_y + p[1] * MOVE_SPEED),
-        ),
-    )
-    px, py = best
-    return {
-        "type": "move",
-        "dx": px * MOVE_SPEED,
-        "dy": py * MOVE_SPEED,
-    }
-
-
-def _distance_to_nearest_wall(x, y):
-    return min(x - ARENA_MIN, ARENA_MAX - x, y - ARENA_MIN, ARENA_MAX - y)
+    return {"type": "move", "dx": ux * MOVE_SPEED, "dy": uy * MOVE_SPEED}, {"hp": hp, "opp_hp": opp_hp}
